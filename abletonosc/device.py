@@ -80,7 +80,7 @@ class DeviceHandler(AbletonOSCHandler):
         # Device: Get/set individual parameters
         #--------------------------------------------------------------------------------
         def device_get_parameter_value(device, params: Tuple[Any] = ()):
-            return params[0], device.parameters[params[0]].value
+            return params[0], int(device.parameters[params[0]].value)
 
         def device_set_parameter_value(device, params: Tuple[Any] = ()):
             param_id, param_value = params[:2]
