@@ -275,9 +275,9 @@ class TrackHandler(AbletonOSCHandler):
             self.osc_server.add_handler("/live/return/get/%s" % prop,
                                         create_return_track_callback(self._get_property, prop))
             self.osc_server.add_handler("/live/return/start_listen/%s" % prop,
-                                        create_return_track_callback(self._start_listen, prop, include_track_id=True))
+                                        create_return_track_callback(self._start_return_listen, prop, include_track_id=True))
             self.osc_server.add_handler("/live/return/stop_listen/%s" % prop,
-                                        create_return_track_callback(self._stop_listen, prop, include_track_id=True))
+                                        create_return_track_callback(self._stop_return_listen, prop, include_track_id=True))
         for prop in return_properties_rw:
             self.osc_server.add_handler("/live/return/set/%s" % prop,
                                         create_return_track_callback(self._set_property, prop))
@@ -289,9 +289,9 @@ class TrackHandler(AbletonOSCHandler):
             self.osc_server.add_handler("/live/return/set/%s" % prop,
                                         create_return_track_callback(self._set_mixer_property, prop))
             self.osc_server.add_handler("/live/return/start_listen/%s" % prop,
-                                        create_return_track_callback(self._start_mixer_listen, prop, include_track_id=True))
+                                        create_return_track_callback(self._start_return_mixer_listen, prop, include_track_id=True))
             self.osc_server.add_handler("/live/return/stop_listen/%s" % prop,
-                                        create_return_track_callback(self._stop_mixer_listen, prop, include_track_id=True))
+                                        create_return_track_callback(self._stop_return_mixer_listen, prop, include_track_id=True))
 
         # Return track send handlers
         def return_track_get_send(track, params: Tuple[Any] = ()):
@@ -376,3 +376,74 @@ class TrackHandler(AbletonOSCHandler):
             del self.listener_functions[listener_key]
         else:
             self.logger.warning("No listener function found for property: %s (%s)" % (prop, str(params)))
+
+    #--------------------------------------------------------------------------------
+    # Return track-specific listener methods
+    #--------------------------------------------------------------------------------
+    def _start_return_listen(self, target, prop, params: Optional[Tuple] = ()) -> None:
+        """
+        Start listening for the property named `prop` on the Live return track object `target`.
+        """
+        def property_changed_callback():
+            value = getattr(target, prop)
+            self.logger.info("Property %s changed of return %s: %s" % (prop, str(params), value))
+            osc_address = "/live/return/get/%s" % prop
+            self.osc_server.send(osc_address, (*params, value,))
+
+        listener_key = ("return_" + prop, tuple(params))
+        if listener_key in self.listener_functions:
+            self._stop_return_listen(target, prop, params)
+
+        self.logger.info("Adding listener for return %s, property: %s" % (str(params), prop))
+        add_listener_function_name = "add_%s_listener" % prop
+        add_listener_function = getattr(target, add_listener_function_name)
+        add_listener_function(property_changed_callback)
+        self.listener_functions[listener_key] = property_changed_callback
+        #--------------------------------------------------------------------------------
+        # Immediately send the current value
+        #--------------------------------------------------------------------------------
+        property_changed_callback()
+
+    def _stop_return_listen(self, target, prop, params: Optional[Tuple[Any]] = ()) -> None:
+        listener_key = ("return_" + prop, tuple(params))
+        if listener_key in self.listener_functions:
+            self.logger.info("Removing listener for return %s, property %s" % (str(params), prop))
+            listener_function = self.listener_functions[listener_key]
+            remove_listener_function_name = "remove_%s_listener" % prop
+            remove_listener_function = getattr(target, remove_listener_function_name)
+            remove_listener_function(listener_function)
+            del self.listener_functions[listener_key]
+        else:
+            self.logger.warning("No listener function found for return property: %s (%s)" % (prop, str(params)))
+
+    def _start_return_mixer_listen(self, target, prop, params: Optional[Tuple] = ()) -> None:
+        parameter_object = getattr(target.mixer_device, prop)
+        def property_changed_callback():
+            value = parameter_object.value
+            self.logger.info("Property %s changed of return %s: %s" % (prop, str(params), value))
+            osc_address = "/live/return/get/%s" % prop
+            self.osc_server.send(osc_address, (*params, value,))
+
+        listener_key = ("return_" + prop, tuple(params))
+        if listener_key in self.listener_functions:
+            self._stop_return_mixer_listen(target, prop, params)
+
+        self.logger.info("Adding listener for return %s, property: %s" % (str(params), prop))
+
+        parameter_object.add_value_listener(property_changed_callback)
+        self.listener_functions[listener_key] = property_changed_callback
+        #--------------------------------------------------------------------------------
+        # Immediately send the current value
+        #--------------------------------------------------------------------------------
+        property_changed_callback()
+
+    def _stop_return_mixer_listen(self, target, prop, params: Optional[Tuple[Any]] = ()) -> None:
+        parameter_object = getattr(target.mixer_device, prop)
+        listener_key = ("return_" + prop, tuple(params))
+        if listener_key in self.listener_functions:
+            self.logger.info("Removing listener for return %s, property %s" % (str(params), prop))
+            listener_function = self.listener_functions[listener_key]
+            parameter_object.remove_value_listener(listener_function)
+            del self.listener_functions[listener_key]
+        else:
+            self.logger.warning("No listener function found for return property: %s (%s)" % (prop, str(params)))
