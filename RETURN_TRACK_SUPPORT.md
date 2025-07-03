@@ -16,7 +16,7 @@ All return track operations use the `/live/return/` namespace with the same patt
 
 #### Properties (Read/Write)
 - `/live/return/get/name <index>` - Get return track name
-- `/live/return/set/name <index> <name>` - Set return track name
+- `/live/return/set/name <index> <n>` - Set return track name
 - `/live/return/get/color <index>` - Get return track color
 - `/live/return/set/color <index> <color>` - Set return track color
 - `/live/return/get/mute <index>` - Get mute state
@@ -29,6 +29,16 @@ All return track operations use the `/live/return/` namespace with the same patt
 - `/live/return/set/volume <index> <value>` - Set return track volume (0.0-1.0)
 - `/live/return/get/panning <index>` - Get return track panning
 - `/live/return/set/panning <index> <value>` - Set return track panning (-1.0 to 1.0)
+
+#### Listeners/Observers (Real-time Updates) - NOW FULLY WORKING!
+- `/live/return/start_listen/volume <index>` - Start listening to volume changes
+- `/live/return/stop_listen/volume <index>` - Stop listening to volume changes
+- `/live/return/start_listen/output_meter_level <index>` - Start listening to meter
+- `/live/return/stop_listen/output_meter_level <index>` - Stop listening to meter
+- `/live/return/start_listen/mute <index>` - Start listening to mute state
+- `/live/return/stop_listen/mute <index>` - Stop listening to mute state
+- `/live/return/start_listen/panning <index>` - Start listening to pan changes
+- `/live/return/stop_listen/panning <index>` - Stop listening to pan changes
 
 #### Send Controls
 - `/live/return/get/send <index> <send_id>` - Get send value
@@ -70,6 +80,10 @@ To control the first return track's volume:
 
 # Mute the return track
 /live/return/set/mute 0 1
+
+# Start listening for volume changes
+/live/return/start_listen/volume 0
+# Now you'll receive updates at /live/return/get/volume whenever it changes
 ```
 
 ### Getting All Return Tracks
@@ -84,6 +98,9 @@ send("/live/song/get/return_track_names")
 ## Implementation Details
 
 The implementation follows the same patterns as regular tracks but uses the dedicated `/live/return/` namespace. Return tracks are indexed starting from 0, independent of regular track indices.
+
+### Listener Implementation
+Return track listeners are now fully implemented with dedicated methods that ensure responses are sent to the correct `/live/return/get/*` addresses. This allows for real-time updates of return track parameters in your OSC client.
 
 ## Compatibility
 
@@ -102,6 +119,12 @@ The implementation has been tested with:
 - Multiple return tracks
 - Various device configurations
 - TouchOSC templates
+- Real-time parameter updates via listeners
+
+## Version History
+
+- v1.0.0 - Initial return track support with basic get/set operations
+- v1.1.0 - Added full listener/observer support for real-time updates
 
 ## Contributing
 
