@@ -226,6 +226,115 @@ class TrackHandler(AbletonOSCHandler):
         self.osc_server.add_handler("/live/track/get/input_routing_channel", create_track_callback(track_get_input_routing_channel))
         self.osc_server.add_handler("/live/track/set/input_routing_channel", create_track_callback(track_set_input_routing_channel))
 
+        #--------------------------------------------------------------------------------
+        # Return Track handlers
+        #--------------------------------------------------------------------------------
+        def create_return_track_callback(func: Callable,
+                                        *args,
+                                        include_track_id: bool = False):
+            def return_track_callback(params: Tuple[Any]):
+                track_index = int(params[0])
+                track = self.song.return_tracks[track_index]
+                if include_track_id:
+                    rv = func(track, *args, tuple(params[0:]))
+                else:
+                    rv = func(track, *args, tuple(params[1:]))
+
+                if rv is not None:
+                    return (track_index, *rv)
+
+            return return_track_callback
+
+        # Return tracks support most of the same properties/methods as regular tracks
+        # except for arm, fold_state, is_foldable, is_grouped, input routing
+        return_properties_r = [
+            "fired_slot_index",
+            "has_audio_input",
+            "has_audio_output",
+            "has_midi_input",
+            "has_midi_output",
+            "is_visible",
+            "output_meter_level",
+            "output_meter_left",
+            "output_meter_right",
+            "playing_slot_index",
+        ]
+        return_properties_rw = [
+            "color",
+            "color_index",
+            "mute",
+            "solo",
+            "name"
+        ]
+
+        for method in methods:
+            self.osc_server.add_handler("/live/return/%s" % method,
+                                        create_return_track_callback(self._call_method, method))
+
+        for prop in return_properties_r + return_properties_rw:
+            self.osc_server.add_handler("/live/return/get/%s" % prop,
+                                        create_return_track_callback(self._get_property, prop))
+            self.osc_server.add_handler("/live/return/start_listen/%s" % prop,
+                                        create_return_track_callback(self._start_listen, prop, include_track_id=True))
+            self.osc_server.add_handler("/live/return/stop_listen/%s" % prop,
+                                        create_return_track_callback(self._stop_listen, prop, include_track_id=True))
+        for prop in return_properties_rw:
+            self.osc_server.add_handler("/live/return/set/%s" % prop,
+                                        create_return_track_callback(self._set_property, prop))
+
+        # Mixer properties for return tracks
+        for prop in mixer_properties_rw:
+            self.osc_server.add_handler("/live/return/get/%s" % prop,
+                                        create_return_track_callback(self._get_mixer_property, prop))
+            self.osc_server.add_handler("/live/return/set/%s" % prop,
+                                        create_return_track_callback(self._set_mixer_property, prop))
+            self.osc_server.add_handler("/live/return/start_listen/%s" % prop,
+                                        create_return_track_callback(self._start_mixer_listen, prop, include_track_id=True))
+            self.osc_server.add_handler("/live/return/stop_listen/%s" % prop,
+                                        create_return_track_callback(self._stop_mixer_listen, prop, include_track_id=True))
+
+        # Return track send handlers
+        def return_track_get_send(track, params: Tuple[Any] = ()):
+            send_id, = params
+            return track.mixer_device.sends[send_id].value,
+
+        def return_track_set_send(track, params: Tuple[Any] = ()):
+            send_id, value = params
+            track.mixer_device.sends[send_id].value = value
+
+        self.osc_server.add_handler("/live/return/get/send", create_return_track_callback(return_track_get_send))
+        self.osc_server.add_handler("/live/return/set/send", create_return_track_callback(return_track_set_send))
+
+        # Return track clip handlers
+        def return_track_delete_clip(track, params: Tuple[Any]):
+            clip_index, = params
+            track.clip_slots[clip_index].delete_clip()
+
+        self.osc_server.add_handler("/live/return/delete_clip", create_return_track_callback(return_track_delete_clip))
+
+        # Return track clip property handlers
+        self.osc_server.add_handler("/live/return/get/clips/name", create_return_track_callback(track_get_clip_names))
+        self.osc_server.add_handler("/live/return/get/clips/length", create_return_track_callback(track_get_clip_lengths))
+        self.osc_server.add_handler("/live/return/get/clips/color", create_return_track_callback(track_get_clip_colors))
+        self.osc_server.add_handler("/live/return/get/arrangement_clips/name", create_return_track_callback(track_get_arrangement_clip_names))
+        self.osc_server.add_handler("/live/return/get/arrangement_clips/length", create_return_track_callback(track_get_arrangement_clip_lengths))
+        self.osc_server.add_handler("/live/return/get/arrangement_clips/start_time", create_return_track_callback(track_get_arrangement_clip_start_times))
+
+        # Return track device handlers
+        self.osc_server.add_handler("/live/return/get/num_devices", create_return_track_callback(track_get_num_devices))
+        self.osc_server.add_handler("/live/return/get/devices/name", create_return_track_callback(track_get_device_names))
+        self.osc_server.add_handler("/live/return/get/devices/type", create_return_track_callback(track_get_device_types))
+        self.osc_server.add_handler("/live/return/get/devices/class_name", create_return_track_callback(track_get_device_class_names))
+        self.osc_server.add_handler("/live/return/get/devices/can_have_chains", create_return_track_callback(track_get_device_can_have_chains))
+
+        # Return track output routing handlers
+        self.osc_server.add_handler("/live/return/get/available_output_routing_types", create_return_track_callback(track_get_available_output_routing_types))
+        self.osc_server.add_handler("/live/return/get/available_output_routing_channels", create_return_track_callback(track_get_available_output_routing_channels))
+        self.osc_server.add_handler("/live/return/get/output_routing_type", create_return_track_callback(track_get_output_routing_type))
+        self.osc_server.add_handler("/live/return/set/output_routing_type", create_return_track_callback(track_set_output_routing_type))
+        self.osc_server.add_handler("/live/return/get/output_routing_channel", create_return_track_callback(track_get_output_routing_channel))
+        self.osc_server.add_handler("/live/return/set/output_routing_channel", create_return_track_callback(track_set_output_routing_channel))
+
     def _set_mixer_property(self, target, prop, params: Tuple) -> None:
         parameter_object = getattr(target.mixer_device, prop)
         self.logger.info("Setting property for %s: %s (new value %s)" % (self.class_identifier, prop, params[0]))
