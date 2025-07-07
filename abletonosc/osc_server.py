@@ -8,6 +8,7 @@ import errno
 import socket
 import logging
 import traceback
+import time
 
 class OSCServer:
     def __init__(self,
@@ -40,6 +41,11 @@ class OSCServer:
         self.logger = logging.getLogger("abletonosc")
         self.logger.info("Starting OSC server (local %s, response port %d)",
                          str(self._local_addr), self._response_port)
+        
+        # DEBUG: Add TouchOSC debugging
+        self.debug_touchosc = True
+        self.message_count = 0
+        self.listener_message_count = 0
 
     def add_handler(self, address: str, handler: Callable) -> None:
         """
@@ -92,6 +98,7 @@ class OSCServer:
             while True:
                 repeats += 1
                 if repeats > 20:
+                    self.logger.error(f"TOO MANY REPEATS IN SINGLE TICK! Last message: {message.address if 'message' in locals() else 'unknown'}")
                     fd = open("/tmp/TOO_MANY_REPEATS", "w")
                     # Fix: Convert bytes to string
                     fd.write(data.decode('utf-8', errors='ignore'))
@@ -110,10 +117,28 @@ class OSCServer:
                 self._remote_addr = (remote_addr[0], OSC_RESPONSE_PORT)
                 try:
                     message = OscMessage(data)
+                    
+                    # DEBUG: Log all messages if debugging is enabled
+                    if self.debug_touchosc:
+                        self.message_count += 1
+                        if "listen" in message.address:
+                            self.listener_message_count += 1
+                            self.logger.warning(f"[DEBUG {time.time():.3f}] LISTENER MSG #{self.listener_message_count}: {message.address} params: {message.params}")
+                        elif self.message_count % 10 == 0 or "refresh" in message.address or "get" in message.address:
+                            self.logger.info(f"[DEBUG] OSC msg #{self.message_count}: {message.address} params: {message.params[:3]}...")  # Limit param logging
 
                     if message.address in self._callbacks:
                         callback = self._callbacks[message.address]
-                        rv = callback(message.params)
+                        
+                        # DEBUG: Log callback execution time for listeners
+                        if self.debug_touchosc and "listen" in message.address:
+                            start_time = time.time()
+                            rv = callback(message.params)
+                            elapsed = time.time() - start_time
+                            if elapsed > 0.1:  # Log slow callbacks
+                                self.logger.warning(f"[DEBUG] SLOW CALLBACK: {message.address} took {elapsed:.3f}s")
+                        else:
+                            rv = callback(message.params)
 
                         if rv is not None:
                             assert isinstance(rv, tuple)
@@ -123,9 +148,14 @@ class OSCServer:
                                       params=rv,
                                       remote_addr=response_addr)
                     elif "*" in message.address:
+                        if self.debug_touchosc:
+                            self.logger.info(f"[DEBUG] Wildcard OSC address: {message.address}")
+                            
                         regex = message.address.replace("*", "[^/]+")
+                        matched_count = 0
                         for callback_address, callback in self._callbacks.items():
                             if re.match(regex, callback_address):
+                                matched_count += 1
                                 try:
                                     rv = callback(message.params)
                                 except ValueError:
@@ -147,6 +177,9 @@ class OSCServer:
                                     self.send(address=callback_address,
                                               params=rv,
                                               remote_addr=response_addr)
+                        
+                        if self.debug_touchosc and matched_count > 0:
+                            self.logger.info(f"[DEBUG] Wildcard matched {matched_count} callbacks")
                     else:
                         self.logger.error("AbletonOSC: Unknown OSC address: %s" % message.address)
                 except ParseError:
