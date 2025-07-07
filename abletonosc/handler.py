@@ -1,6 +1,7 @@
 from ableton.v2.control_surface.component import Component
 from typing import Optional, Tuple, Any
 import logging
+import time
 from .osc_server import OSCServer
 
 class AbletonOSCHandler(Component):
@@ -12,6 +13,12 @@ class AbletonOSCHandler(Component):
         self.osc_server: OSCServer = self.manager.osc_server
         self.listener_functions = {}
         self.class_identifier = None
+        
+        # DEBUG: Add rate limiting and tracking
+        self._last_listener_time = 0
+        self._listener_rate_limit = 0.005  # 5ms between listeners
+        self._total_listener_count = 0
+        
         self.init_api()
 
     def init_api(self):
@@ -19,6 +26,8 @@ class AbletonOSCHandler(Component):
 
     def clear_api(self):
         """Clear all listeners when shutting down."""
+        self.logger.info(f"[DEBUG] Clearing {len(self.listener_functions)} listeners for {self.class_identifier}")
+        
         # Remove all listeners safely
         for listener_key in list(self.listener_functions.keys()):
             try:
@@ -104,6 +113,15 @@ class AbletonOSCHandler(Component):
             prop:
             params:
         """
+        # DEBUG: Rate limit listener creation
+        current_time = time.time()
+        time_since_last = current_time - self._last_listener_time
+        if time_since_last < self._listener_rate_limit:
+            sleep_time = self._listener_rate_limit - time_since_last
+            self.logger.warning(f"[DEBUG] Rate limiting listener creation, sleeping {sleep_time:.3f}s")
+            time.sleep(sleep_time)
+        self._last_listener_time = time.time()
+        
         def property_changed_callback():
             try:
                 value = getattr(target, prop)
@@ -120,7 +138,9 @@ class AbletonOSCHandler(Component):
             self._stop_listen(target, prop, params)
 
         try:
-            self.logger.info("Adding listener for %s %s, property: %s" % (self.class_identifier, str(params), prop))
+            self._total_listener_count += 1
+            self.logger.info(f"[DEBUG #{self._total_listener_count}] Adding listener for {self.class_identifier} {params}, property: {prop}. Active: {len(self.listener_functions) + 1}")
+            
             add_listener_function_name = "add_%s_listener" % prop
             add_listener_function = getattr(target, add_listener_function_name)
             add_listener_function(property_changed_callback)
@@ -131,11 +151,14 @@ class AbletonOSCHandler(Component):
         except AttributeError as e:
             self.logger.warning(f"Cannot add listener for {prop}: {e}")
             raise
+        except Exception as e:
+            self.logger.error(f"[DEBUG] ERROR adding listener for {prop}: {e}")
+            raise
 
     def _stop_listen(self, target, prop, params: Optional[Tuple[Any]] = ()) -> None:
         listener_key = (prop, tuple(params))
         if listener_key in self.listener_functions:
-            self.logger.info("Removing listener for %s %s, property %s" % (self.class_identifier, str(params), prop))
+            self.logger.info(f"[DEBUG] Removing listener for {self.class_identifier} {params}, property {prop}. Active: {len(self.listener_functions) - 1}")
             listener_function = self.listener_functions[listener_key]
             try:
                 remove_listener_function_name = "remove_%s_listener" % prop
