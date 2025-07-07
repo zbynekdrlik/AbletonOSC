@@ -1,11 +1,14 @@
 from typing import Tuple, Any, Callable, Optional
 from .handler import AbletonOSCHandler
+import threading
 
 
 class TrackHandler(AbletonOSCHandler):
     def __init__(self, manager):
         super().__init__(manager)
         self.class_identifier = "track"
+        # Use a lock to prevent race conditions during listener registration
+        self._listener_lock = threading.Lock()
 
     def init_api(self):
         def create_track_callback(func: Callable,
@@ -13,6 +16,11 @@ class TrackHandler(AbletonOSCHandler):
                                   include_track_id: bool = False):
             def track_callback(params: Tuple[Any]):
                 track_index = int(params[0])
+                # Validate track index
+                if track_index < 0 or track_index >= len(self.song.tracks):
+                    self.logger.warning(f"Invalid track index: {track_index}")
+                    return None
+                    
                 track = self.song.tracks[track_index]
                 if include_track_id:
                     rv = func(track, *args, tuple(params[0:]))
@@ -226,44 +234,285 @@ class TrackHandler(AbletonOSCHandler):
         self.osc_server.add_handler("/live/track/get/input_routing_channel", create_track_callback(track_get_input_routing_channel))
         self.osc_server.add_handler("/live/track/set/input_routing_channel", create_track_callback(track_set_input_routing_channel))
 
+        #--------------------------------------------------------------------------------
+        # Return Track handlers
+        #--------------------------------------------------------------------------------
+        def create_return_track_callback(func: Callable,
+                                        *args,
+                                        include_track_id: bool = False):
+            def return_track_callback(params: Tuple[Any]):
+                track_index = int(params[0])
+                # Validate return track index
+                if track_index < 0 or track_index >= len(self.song.return_tracks):
+                    self.logger.warning(f"Invalid return track index: {track_index}")
+                    return None
+                    
+                track = self.song.return_tracks[track_index]
+                if include_track_id:
+                    rv = func(track, *args, tuple(params[0:]))
+                else:
+                    rv = func(track, *args, tuple(params[1:]))
+
+                if rv is not None:
+                    return (track_index, *rv)
+
+            return return_track_callback
+
+        # Return tracks support most of the same properties/methods as regular tracks
+        # except for arm, fold_state, is_foldable, is_grouped, input routing
+        return_properties_r = [
+            "fired_slot_index",
+            "has_audio_input",
+            "has_audio_output",
+            "has_midi_input",
+            "has_midi_output",
+            "is_visible",
+            "output_meter_level",
+            "output_meter_left",
+            "output_meter_right",
+            "playing_slot_index",
+        ]
+        return_properties_rw = [
+            "color",
+            "color_index",
+            "mute",
+            "solo",
+            "name"
+        ]
+
+        for method in methods:
+            self.osc_server.add_handler("/live/return/%s" % method,
+                                        create_return_track_callback(self._call_method, method))
+
+        for prop in return_properties_r + return_properties_rw:
+            self.osc_server.add_handler("/live/return/get/%s" % prop,
+                                        create_return_track_callback(self._get_property, prop))
+            self.osc_server.add_handler("/live/return/start_listen/%s" % prop,
+                                        create_return_track_callback(self._start_return_listen, prop, include_track_id=True))
+            self.osc_server.add_handler("/live/return/stop_listen/%s" % prop,
+                                        create_return_track_callback(self._stop_return_listen, prop, include_track_id=True))
+        for prop in return_properties_rw:
+            self.osc_server.add_handler("/live/return/set/%s" % prop,
+                                        create_return_track_callback(self._set_property, prop))
+
+        # Mixer properties for return tracks
+        for prop in mixer_properties_rw:
+            self.osc_server.add_handler("/live/return/get/%s" % prop,
+                                        create_return_track_callback(self._get_mixer_property, prop))
+            self.osc_server.add_handler("/live/return/set/%s" % prop,
+                                        create_return_track_callback(self._set_mixer_property, prop))
+            self.osc_server.add_handler("/live/return/start_listen/%s" % prop,
+                                        create_return_track_callback(self._start_return_mixer_listen, prop, include_track_id=True))
+            self.osc_server.add_handler("/live/return/stop_listen/%s" % prop,
+                                        create_return_track_callback(self._stop_return_mixer_listen, prop, include_track_id=True))
+
+        # Return track send handlers
+        def return_track_get_send(track, params: Tuple[Any] = ()):
+            send_id, = params
+            return track.mixer_device.sends[send_id].value,
+
+        def return_track_set_send(track, params: Tuple[Any] = ()):
+            send_id, value = params
+            track.mixer_device.sends[send_id].value = value
+
+        self.osc_server.add_handler("/live/return/get/send", create_return_track_callback(return_track_get_send))
+        self.osc_server.add_handler("/live/return/set/send", create_return_track_callback(return_track_set_send))
+
+        # Return track clip handlers
+        def return_track_delete_clip(track, params: Tuple[Any]):
+            clip_index, = params
+            track.clip_slots[clip_index].delete_clip()
+
+        self.osc_server.add_handler("/live/return/delete_clip", create_return_track_callback(return_track_delete_clip))
+
+        # Return track clip property handlers
+        self.osc_server.add_handler("/live/return/get/clips/name", create_return_track_callback(track_get_clip_names))
+        self.osc_server.add_handler("/live/return/get/clips/length", create_return_track_callback(track_get_clip_lengths))
+        self.osc_server.add_handler("/live/return/get/clips/color", create_return_track_callback(track_get_clip_colors))
+        self.osc_server.add_handler("/live/return/get/arrangement_clips/name", create_return_track_callback(track_get_arrangement_clip_names))
+        self.osc_server.add_handler("/live/return/get/arrangement_clips/length", create_return_track_callback(track_get_arrangement_clip_lengths))
+        self.osc_server.add_handler("/live/return/get/arrangement_clips/start_time", create_return_track_callback(track_get_arrangement_clip_start_times))
+
+        # Return track device handlers
+        self.osc_server.add_handler("/live/return/get/num_devices", create_return_track_callback(track_get_num_devices))
+        self.osc_server.add_handler("/live/return/get/devices/name", create_return_track_callback(track_get_device_names))
+        self.osc_server.add_handler("/live/return/get/devices/type", create_return_track_callback(track_get_device_types))
+        self.osc_server.add_handler("/live/return/get/devices/class_name", create_return_track_callback(track_get_device_class_names))
+        self.osc_server.add_handler("/live/return/get/devices/can_have_chains", create_return_track_callback(track_get_device_can_have_chains))
+
+        # Return track output routing handlers
+        self.osc_server.add_handler("/live/return/get/available_output_routing_types", create_return_track_callback(track_get_available_output_routing_types))
+        self.osc_server.add_handler("/live/return/get/available_output_routing_channels", create_return_track_callback(track_get_available_output_routing_channels))
+        self.osc_server.add_handler("/live/return/get/output_routing_type", create_return_track_callback(track_get_output_routing_type))
+        self.osc_server.add_handler("/live/return/set/output_routing_type", create_return_track_callback(track_set_output_routing_type))
+        self.osc_server.add_handler("/live/return/get/output_routing_channel", create_return_track_callback(track_get_output_routing_channel))
+        self.osc_server.add_handler("/live/return/set/output_routing_channel", create_return_track_callback(track_set_output_routing_channel))
+
     def _set_mixer_property(self, target, prop, params: Tuple) -> None:
         parameter_object = getattr(target.mixer_device, prop)
-        self.logger.info("Setting property for %s: %s (new value %s)" % (self.class_identifier, prop, params[0]))
+        self.logger.info("Setting mixer property for %s: %s (new value %s)" % (self.class_identifier, prop, params[0]))
         parameter_object.value = params[0]
 
     def _get_mixer_property(self, target, prop, params: Optional[Tuple] = ()) -> Tuple[Any]:
         parameter_object = getattr(target.mixer_device, prop)
-        self.logger.info("Getting property for %s: %s = %s" % (self.class_identifier, prop, parameter_object.value))
+        self.logger.info("Getting mixer property for %s: %s = %s" % (self.class_identifier, prop, parameter_object.value))
         return parameter_object.value,
 
     def _start_mixer_listen(self, target, prop, params: Optional[Tuple] = ()) -> None:
-        parameter_object = getattr(target.mixer_device, prop)
-        def property_changed_callback():
-            value = parameter_object.value
-            self.logger.info("Property %s changed of %s %s: %s" % (prop, self.class_identifier, str(params), value))
-            osc_address = "/live/%s/get/%s" % (self.class_identifier, prop)
-            self.osc_server.send(osc_address, (*params, value,))
+        with self._listener_lock:
+            parameter_object = getattr(target.mixer_device, prop)
+            
+            # Extract track index from params
+            track_index = params[0] if params else -1
+            
+            def property_changed_callback():
+                try:
+                    value = parameter_object.value
+                    self.logger.info("Mixer property %s changed for track %d: %s" % (prop, track_index, value))
+                    osc_address = "/live/%s/get/%s" % (self.class_identifier, prop)
+                    # Always send the original track index, not a wrong one
+                    self.osc_server.send(osc_address, (track_index, value))
+                except Exception as e:
+                    self.logger.warning(f"Error in mixer property_changed_callback: {e}")
 
-        listener_key = (prop, tuple(params))
-        if listener_key in self.listener_functions:
-            self._stop_mixer_listen(target, prop, params)
+            listener_key = (prop, tuple(params))
+            
+            # Remove existing listener if present
+            if listener_key in self.listener_functions:
+                self._stop_mixer_listen(target, prop, params)
 
-        self.logger.info("Adding listener for %s %s, property: %s" % (self.class_identifier, str(params), prop))
+            self.logger.info("Adding mixer listener for track %d, property: %s" % (track_index, prop))
 
-        parameter_object.add_value_listener(property_changed_callback)
-        self.listener_functions[listener_key] = property_changed_callback
-        #--------------------------------------------------------------------------------
-        # Immediately send the current value
-        #--------------------------------------------------------------------------------
-        property_changed_callback()
+            try:
+                parameter_object.add_value_listener(property_changed_callback)
+                self.listener_functions[listener_key] = property_changed_callback
+                # Immediately send the current value
+                property_changed_callback()
+            except Exception as e:
+                self.logger.error(f"Failed to add mixer listener: {e}")
+                raise
 
     def _stop_mixer_listen(self, target, prop, params: Optional[Tuple[Any]] = ()) -> None:
-        parameter_object = getattr(target.mixer_device, prop)
-        listener_key = (prop, tuple(params))
-        if listener_key in self.listener_functions:
-            self.logger.info("Removing listener for %s %s, property %s" % (self.class_identifier, str(params), prop))
-            listener_function = self.listener_functions[listener_key]
-            parameter_object.remove_value_listener(listener_function)
-            del self.listener_functions[listener_key]
-        else:
-            self.logger.warning("No listener function found for property: %s (%s)" % (prop, str(params)))
+        with self._listener_lock:
+            parameter_object = getattr(target.mixer_device, prop)
+            listener_key = (prop, tuple(params))
+            if listener_key in self.listener_functions:
+                self.logger.info("Removing mixer listener for %s %s, property %s" % (self.class_identifier, str(params), prop))
+                listener_function = self.listener_functions[listener_key]
+                try:
+                    parameter_object.remove_value_listener(listener_function)
+                    del self.listener_functions[listener_key]
+                except Exception as e:
+                    self.logger.warning(f"Error removing mixer listener: {e}")
+                    # Still remove from our tracking
+                    if listener_key in self.listener_functions:
+                        del self.listener_functions[listener_key]
+            else:
+                self.logger.warning("No listener function found for mixer property: %s (%s)" % (prop, str(params)))
+
+    #--------------------------------------------------------------------------------
+    # Return track-specific listener methods
+    #--------------------------------------------------------------------------------
+    def _start_return_listen(self, target, prop, params: Optional[Tuple] = ()) -> None:
+        """
+        Start listening for the property named `prop` on the Live return track object `target`.
+        """
+        with self._listener_lock:
+            # Extract return track index from params
+            track_index = params[0] if params else -1
+            
+            def property_changed_callback():
+                try:
+                    value = getattr(target, prop)
+                    self.logger.info("Return property %s changed for return track %d: %s" % (prop, track_index, value))
+                    osc_address = "/live/return/get/%s" % prop
+                    self.osc_server.send(osc_address, (track_index, value))
+                except Exception as e:
+                    self.logger.warning(f"Error in return property_changed_callback: {e}")
+
+            listener_key = ("return_" + prop, tuple(params))
+            
+            if listener_key in self.listener_functions:
+                self._stop_return_listen(target, prop, params)
+
+            self.logger.info("Adding listener for return track %d, property: %s" % (track_index, prop))
+            
+            try:
+                add_listener_function_name = "add_%s_listener" % prop
+                add_listener_function = getattr(target, add_listener_function_name)
+                add_listener_function(property_changed_callback)
+                self.listener_functions[listener_key] = property_changed_callback
+                # Immediately send the current value
+                property_changed_callback()
+            except AttributeError as e:
+                self.logger.warning(f"Cannot add return listener for {prop}: {e}")
+                raise
+
+    def _stop_return_listen(self, target, prop, params: Optional[Tuple[Any]] = ()) -> None:
+        with self._listener_lock:
+            listener_key = ("return_" + prop, tuple(params))
+            if listener_key in self.listener_functions:
+                self.logger.info("Removing listener for return %s, property %s" % (str(params), prop))
+                listener_function = self.listener_functions[listener_key]
+                try:
+                    remove_listener_function_name = "remove_%s_listener" % prop
+                    remove_listener_function = getattr(target, remove_listener_function_name)
+                    remove_listener_function(listener_function)
+                    del self.listener_functions[listener_key]
+                except Exception as e:
+                    self.logger.warning(f"Error removing return listener: {e}")
+                    # Still remove from our tracking
+                    if listener_key in self.listener_functions:
+                        del self.listener_functions[listener_key]
+            else:
+                self.logger.warning("No listener function found for return property: %s (%s)" % (prop, str(params)))
+
+    def _start_return_mixer_listen(self, target, prop, params: Optional[Tuple] = ()) -> None:
+        with self._listener_lock:
+            parameter_object = getattr(target.mixer_device, prop)
+            
+            # Extract return track index from params
+            track_index = params[0] if params else -1
+            
+            def property_changed_callback():
+                try:
+                    value = parameter_object.value
+                    self.logger.info("Return mixer property %s changed for return track %d: %s" % (prop, track_index, value))
+                    osc_address = "/live/return/get/%s" % prop
+                    self.osc_server.send(osc_address, (track_index, value))
+                except Exception as e:
+                    self.logger.warning(f"Error in return mixer property_changed_callback: {e}")
+
+            listener_key = ("return_" + prop, tuple(params))
+            
+            if listener_key in self.listener_functions:
+                self._stop_return_mixer_listen(target, prop, params)
+
+            self.logger.info("Adding mixer listener for return track %d, property: %s" % (track_index, prop))
+
+            try:
+                parameter_object.add_value_listener(property_changed_callback)
+                self.listener_functions[listener_key] = property_changed_callback
+                # Immediately send the current value
+                property_changed_callback()
+            except Exception as e:
+                self.logger.error(f"Failed to add return mixer listener: {e}")
+                raise
+
+    def _stop_return_mixer_listen(self, target, prop, params: Optional[Tuple[Any]] = ()) -> None:
+        with self._listener_lock:
+            parameter_object = getattr(target.mixer_device, prop)
+            listener_key = ("return_" + prop, tuple(params))
+            if listener_key in self.listener_functions:
+                self.logger.info("Removing mixer listener for return %s, property %s" % (str(params), prop))
+                listener_function = self.listener_functions[listener_key]
+                try:
+                    parameter_object.remove_value_listener(listener_function)
+                    del self.listener_functions[listener_key]
+                except Exception as e:
+                    self.logger.warning(f"Error removing return mixer listener: {e}")
+                    # Still remove from our tracking
+                    if listener_key in self.listener_functions:
+                        del self.listener_functions[listener_key]
+            else:
+                self.logger.warning("No listener function found for return mixer property: %s (%s)" % (prop, str(params)))

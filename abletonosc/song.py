@@ -145,6 +145,62 @@ class SongHandler(AbletonOSCHandler):
             return tuple(rv)
         self.osc_server.add_handler("/live/song/get/track_data", song_get_track_data)
 
+        #--------------------------------------------------------------------------------
+        # Callbacks for Song: Return Track properties
+        #--------------------------------------------------------------------------------
+        self.osc_server.add_handler("/live/song/get/num_return_tracks", lambda _: (len(self.song.return_tracks),))
+
+        def song_get_return_track_names(params):
+            if len(params) == 0:
+                track_index_min, track_index_max = 0, len(self.song.return_tracks)
+            else:
+                track_index_min, track_index_max = params
+                if track_index_max == -1:
+                    track_index_max = len(self.song.return_tracks)
+            return tuple(self.song.return_tracks[index].name for index in range(track_index_min, track_index_max))
+        self.osc_server.add_handler("/live/song/get/return_track_names", song_get_return_track_names)
+
+        def song_get_return_track_data(params):
+            """
+            Retrieve one more properties of a block of return tracks and their clips.
+            Properties must be of the format track.property_name or clip.property_name.
+            """
+            track_index_min, track_index_max, *properties = params
+            self.logger.info("Getting return track data: %s (tracks %d..%d)" %
+                             (properties, track_index_min, track_index_max))
+            if track_index_max == -1:
+                track_index_max = len(self.song.return_tracks)
+            rv = []
+            for track_index in range(track_index_min, track_index_max):
+                track = self.song.return_tracks[track_index]
+                for prop in properties:
+                    obj, property_name = prop.split(".")
+                    if obj == "track":
+                        if property_name == "num_devices":
+                            value = len(track.devices)
+                        else:
+                            value = getattr(track, property_name)
+                            if isinstance(value, Live.Track.Track):
+                                # Map Track objects to their track_index to return via OSC
+                                # For return tracks, return negative indices to distinguish from regular tracks
+                                try:
+                                    value = list(self.song.return_tracks).index(value)
+                                except ValueError:
+                                    value = list(self.song.tracks).index(value)
+                        rv.append(value)
+                    elif obj == "clip":
+                        for clip_slot in track.clip_slots:
+                            if clip_slot.clip is not None:
+                                rv.append(getattr(clip_slot.clip, property_name))
+                            else:
+                                rv.append(None)
+                    elif obj == "device":
+                        for device in track.devices:
+                            rv.append(getattr(device, property_name))
+                    else:
+                        self.logger.error("Unknown object identifier in get/return_track_data: %s" % obj)
+            return tuple(rv)
+        self.osc_server.add_handler("/live/song/get/return_track_data", song_get_return_track_data)
 
         def song_export_structure(params):
             path = "/tmp/abletonosc-song-structure.json"
@@ -170,8 +226,30 @@ class SongHandler(AbletonOSCHandler):
                         }
                         track_data["clips"].append(clip_data)
                 tracks.append(track_data)
+            
+            # Add return tracks to export
+            return_tracks = []
+            for track_index, track in enumerate(self.song.return_tracks):
+                track_data = {
+                    "index": track_index,
+                    "name": track.name,
+                    "is_foldable": False,  # Return tracks can't be foldable
+                    "group_track": None,   # Return tracks can't be grouped
+                    "clips": []
+                }
+                for clip_index, clip_slot in enumerate(track.clip_slots):
+                    if clip_slot.clip:
+                        clip_data = {
+                            "index": clip_index,
+                            "name": clip_slot.clip.name,
+                            "length": clip_slot.clip.length,
+                        }
+                        track_data["clips"].append(clip_data)
+                return_tracks.append(track_data)
+                
             song = {
-                "tracks": tracks
+                "tracks": tracks,
+                "return_tracks": return_tracks
             }
 
             fd = open(path, "w")

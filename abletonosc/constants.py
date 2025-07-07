@@ -2,5 +2,5 @@
 # Constants used in AbletonOSC
 #--------------------------------------------------------------------------------
 
-OSC_LISTEN_PORT = 11000
-OSC_RESPONSE_PORT = 11001
+OSC_LISTEN_PORT = 13000
+OSC_RESPONSE_PORT = 13001
