@@ -93,7 +93,8 @@ class OSCServer:
                 repeats += 1
                 if repeats > 20:
                     fd = open("/tmp/TOO_MANY_REPEATS", "w")
-                    fd.write(data)
+                    # Fix: Convert bytes to string
+                    fd.write(data.decode('utf-8', errors='ignore'))
                     fd.close()
                     break
                 #--------------------------------------------------------------------------------
